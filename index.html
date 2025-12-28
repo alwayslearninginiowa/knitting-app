@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Knitting Chart Companion</title>
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Knitting App">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#ffffff">
+    <link rel="manifest" href='data:application/manifest+json,{
+        "name": "Knitting Chart Viewer",
+        "short_name": "Knitting",
+        "display": "standalone",
+        "orientation": "portrait",
+        "start_url": ".",
+        "background_color": "#ffffff",
+        "theme_color": "#ffffff",
+        "icons": [{
+            "src": "https://cdn-icons-png.flaticon.com/512/3062/3062634.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }]
+    }'>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+    
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f9;
+            height: 100dvh; /* Dynamic Height for Mobile */
+            display: flex; /* This is the Flexbox layout engine */
+            overflow: hidden;
+            overscroll-behavior: none;
+        }
+
+        /* --- LEFT SIDE: PDF VIEWER --- */
+        #viewer-container {
+            flex: 1; 
+            background-color: #525659;
+            overflow: auto; 
+            position: relative;
+            padding: 40px; 
+            display: block; 
+            transition: all 0.3s ease;
+            -webkit-overflow-scrolling: touch; 
+        }
+
+        #pdf-wrapper {
+            position: relative;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            background-color: white; 
+            margin: 0 auto; 
+            display: inline-block; 
+        }
+
+        canvas { display: block; }
+
+        /* --- THE HIGHLIGHT BAR --- */
+        #highlight-bar {
+            position: absolute;
+            left: 0; right: 0; top: 100px; height: 30px;
+            background-color: rgba(255, 182, 193, 0.85); 
+            border-top: 1px solid rgba(255, 0, 0, 0.5);
+            border-bottom: 1px solid rgba(255, 0, 0, 0.5);
+            cursor: ns-resize;
+            z-index: 100; 
+            touch-action: none; 
+        }
+        #highlight-bar:hover { background-color: rgba(255, 182, 193, 0.95); }
+
+        /* --- RIGHT SIDE: SIDEBAR --- */
+        #sidebar {
+            width: 340px;
+            background-color: #ffffff;
+            border-left: 1px solid #ddd;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            padding-bottom: 150px; 
+
+            box-shadow: -2px 0 5px rgba(0,0,0,0.05);
+            overflow-y: auto; 
+            overscroll-behavior: contain; 
+            z-index: 20;
+            flex-shrink: 0;
+            transition: margin-right 0.3s ease, transform 0.3s ease;
+            position: relative;
+
+            scrollbar-width: thin;
+            scrollbar-color: #666 #e0e0e0;
+        }
+
+        #sidebar::-webkit-scrollbar { width: 14px; display: block; }
+        #sidebar::-webkit-scrollbar-track { background: #e0e0e0; border-left: 1px solid #ccc; }
+        #sidebar::-webkit-scrollbar-thumb { background-color: #666; border-radius: 8px; border: 3px solid #e0e0e0; }
+
+        #sidebar.collapsed { display: none; }
+
+        .sidebar-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 20px;
+        }
+        h2 { margin: 0; font-size: 1.4em; color: #333; }
+        
+        .close-btn {
+            background: none; border: none; font-size: 1.2em; cursor: pointer; color: #666;
+            padding: 5px; border-radius: 4px;
+        }
+        .close-btn:hover { background: #eee; color: #333; }
+
+        #open-sidebar-btn {
+            position: fixed;
+            top: 20px; right: 20px;
+            background-color: #2e8b57;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            z-index: 100;
+            cursor: pointer;
+            display: none; 
+        }
+        #open-sidebar-btn:hover { background-color: #257045; }
+
+        h3 { font-size: 1.1em; margin-top: 20px; border-bottom: 2px solid #eee; padding-bottom: 5px; color: #333;}
+        .control-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }
+        
+        .btn-action {
+            background: #eee; border: none; padding: 8px 12px; font-size: 0.9em; 
+            border-radius: 4px; cursor: pointer; color: #333; font-weight: bold;
+            transition: background 0.2s;
+        }
+        .btn-action:hover { background: #ddd; }
+        .btn-action:disabled { color: #aaa; cursor: not-allowed; }
+        
+        .zoom-controls { display: flex; gap: 10px; align-items: center; justify-content: center; background: #f0f4f8; padding: 10px; border-radius: 8px; }
+
+        .color-options { display: flex; gap: 5px; margin-bottom: 10px; }
+        .color-btn { width: 30px; height: 30px; border: 2px solid #ddd; border-radius: 50%; cursor: pointer; }
+        .color-btn.selected { border-color: #333; transform: scale(1.1); }
+
+        .counter-box {
+            background: #f9f9f9; padding: 10px; border-radius: 8px; border: 1px solid #eee;
+            margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;
+        }
+        .counter-display { font-size: 1.5em; font-weight: bold; color: #333; width: 50px; text-align: center;}
+        
+        textarea { width: 100%; height: 100px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical; box-sizing: border-box; font-family: inherit;}
+        input[type="range"] { width: 100%; }
+
+        #project-list {
+            list-style: none; padding: 0; margin: 0;
+            border: 1px solid #eee; border-radius: 4px;
+        }
+        #project-list li {
+            padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 0.9em;
+            display: flex; justify-content: space-between; align-items: center;
+            background: #fff;
+            max-width: 100%;
+        }
+        #project-list li span.fname {
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            margin-right: 10px; flex: 1; min-width: 0; font-weight: 500;
+        }
+        #project-list li:hover { background-color: #f9f9f9; }
+        #project-list li.active { background-color: #e0f7fa; border-left: 4px solid #00bcd4; }
+        
+        .remove-link {
+            font-size: 0.8em; color: #d9534f; text-decoration: underline; cursor: pointer;
+            padding: 4px 8px; white-space: nowrap;
+        }
+        .remove-link:hover { color: #c9302c; background: #ffeeee; border-radius: 4px;}
+
+        #loading-msg { display: none; color: #2e8b57; font-weight: bold; margin-top: 10px; }
+        #current-project-name { 
+            font-size: 0.9em; color: #2e8b57; font-weight: bold; margin-bottom: 10px; 
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="open-sidebar-btn" onclick="toggleSidebar()">☰ Tools</button>
+
+    <div id="viewer-container">
+        <div id="pdf-wrapper">
+            <canvas id="the-canvas"></canvas>
+            <div id="highlight-bar"></div>
+        </div>
+    </div>
+
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h2>Knit Chart Viewer</h2>
+            <button class="close-btn" onclick="toggleSidebar()" title="Hide Sidebar">Hide &raquo;</button>
+        </div>
+
+        <div class="control-group">
+            <label>Load New Project (PDF)</label>
+            <input type="file" id="file-input" accept="application/pdf" style="width:100%">
+            <div id="current-project-name">No file loaded</div>
+            <div id="loading-msg">Processing PDF...</div>
+        </div>
+
+        <div class="control-group">
+            <h3>View Controls</h3>
+            
+            <button class="btn-action" style="width:100%; margin-bottom:10px; border:1px solid #ccc;" onclick="toggleFullscreen()">
+                &#x26F6; Toggle Fullscreen
+            </button>
+            
+            <label>Zoom</label>
+            <div class="zoom-controls">
+                <button class="btn-action" onclick="changeZoom(-0.2)">-</button>
+                <span id="zoom-display">150%</span>
+                <button class="btn-action" onclick="changeZoom(0.2)">+</button>
+            </div>
+            
+            <label style="margin-top:10px;">Page Navigation</label>
+            <div class="zoom-controls">
+                <button class="btn-action" id="prev-page">Prev</button>
+                <span id="page-info">Page --</span>
+                <button class="btn-action" id="next-page">Next</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <h3>Highlighter</h3>
+            <label>Bar Height</label>
+            <input type="range" id="height-slider" min="10" max="150" value="30">
+            <label>Color</label>
+            <div class="color-options">
+                <button class="color-btn" style="background: rgba(173, 216, 230, 0.85);" onclick="setBarColor('rgba(173, 216, 230, 0.85)', this)"></button>
+                <button class="color-btn" style="background: rgba(255, 182, 193, 0.85);" onclick="setBarColor('rgba(255, 182, 193, 0.85)', this)"></button>
+                <button class="color-btn" style="background: rgba(221, 160, 221, 0.85);" onclick="setBarColor('rgba(221, 160, 221, 0.85)', this)"></button>
+                <button class="color-btn" style="background: rgba(152, 251, 152, 0.85);" onclick="setBarColor('rgba(152, 251, 152, 0.85)', this)"></button>
+                <button class="color-btn" style="background: rgba(255, 204, 153, 0.85);" onclick="setBarColor('rgba(255, 204, 153, 0.85)', this)"></button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <h3>Row Counters</h3>
+            <div class="counter-box">
+                <span>Total</span>
+                <div>
+                    <button class="btn-action" onclick="updateCount('total', -1)">-</button>
+                    <span id="count-total" class="counter-display">0</span>
+                    <button class="btn-action" onclick="updateCount('total', 1)">+</button>
+                </div>
+            </div>
+            <div class="counter-box">
+                <span>Repeat</span>
+                <div>
+                    <button class="btn-action" onclick="updateCount('repeat', -1)">-</button>
+                    <span id="count-repeat" class="counter-display">0</span>
+                    <button class="btn-action" onclick="updateCount('repeat', 1)">+</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <h3>Notes</h3>
+            <textarea id="notes-area" placeholder="Type notes here..." oninput="saveCurrentState()"></textarea>
+        </div>
+
+        <div class="control-group" style="border-top: 2px dashed #ddd; padding-top: 20px; margin-top: 20px;">
+            <label>Recent Projects Library</label>
+            <div style="font-size:0.8em; color:#666; margin-bottom:5px;">Click a file below to switch project:</div>
+            <ul id="project-list">
+                <li style="color:#999; padding:10px; font-style:italic">No saved projects yet.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. SETUP & CONFIG ---
+        const workerUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+        fetch(workerUrl).then(r => r.text()).then(txt => {
+            const blob = new Blob([txt], { type: "text/javascript" });
+            pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
+        });
+
+        const fileInput = document.getElementById('file-input');
+        const canvas = document.getElementById('the-canvas');
+        const ctx = canvas.getContext('2d');
+        const pdfWrapper = document.getElementById('pdf-wrapper');
+        const highlightBar = document.getElementById('highlight-bar');
+        const projectListEl = document.getElementById('project-list');
+        const loadingMsg = document.getElementById('loading-msg');
+        const viewerContainer = document.getElementById('viewer-container');
+        const heightSlider = document.getElementById('height-slider');
+
+        let pdfDoc = null;
+        let pdfDataBlob = null; 
+        let currentFileName = null;
+        
+        let state = {
+            pageNum: 1,
+            scale: 1.5,
+            counts: { total: 0, repeat: 0 },
+            notes: "",
+            barTop: "100px",
+            barHeight: "30px",
+            barColor: "rgba(255, 182, 193, 0.85)"
+        };
+
+        // --- 2. SIDEBAR LOGIC ---
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const openBtn = document.getElementById('open-sidebar-btn');
+            sidebar.classList.toggle('collapsed');
+            if (sidebar.classList.contains('collapsed')) {
+                openBtn.style.display = 'block';
+            } else {
+                openBtn.style.display = 'none';
+            }
+        }
+
+        // --- 3. FULLSCREEN LOGIC (NEW) ---
+        function toggleFullscreen() {
+          if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(e => {
+                alert("Fullscreen not allowed by browser: " + e.message);
+            });
+          } else {
+            if (document.exitFullscreen) {
+              document.exitFullscreen();
+            }
+          }
+        }
+
+        // --- 4. DATABASE LOGIC ---
+        localforage.config({ name: 'KnittingAppDB' });
+
+        async function saveProjectToDB(fileName, pdfBlob) {
+            const projectData = {
+                fileName: fileName,
+                pdf: pdfBlob,
+                lastModified: Date.now(),
+                state: state
+            };
+            await localforage.setItem(fileName, projectData);
+            loadProjectList();
+        }
+
+        async function saveCurrentState() {
+            if(!currentFileName) return;
+            const projectData = await localforage.getItem(currentFileName);
+            if(projectData) {
+                projectData.state = state;
+                projectData.lastModified = Date.now();
+                await localforage.setItem(currentFileName, projectData);
+            }
+        }
+
+        async function loadProjectList() {
+            const keys = await localforage.keys();
+            projectListEl.innerHTML = "";
+            if(keys.length === 0) {
+                projectListEl.innerHTML = "<li style='color:#999; padding:10px; font-style:italic'>No saved projects yet.</li>";
+                return;
+            }
+
+            keys.forEach(async key => {
+                const item = await localforage.getItem(key);
+                if(!item) return;
+                const li = document.createElement('li');
+                const nameSpan = document.createElement('span');
+                nameSpan.innerText = item.fileName;
+                nameSpan.className = 'fname'; 
+                nameSpan.title = item.fileName; 
+                
+                const removeLink = document.createElement('span');
+                removeLink.innerText = "Remove";
+                removeLink.className = "remove-link";
+                removeLink.onclick = (e) => deleteProject(e, key);
+
+                li.appendChild(nameSpan);
+                li.appendChild(removeLink);
+                if(key === currentFileName) li.classList.add('active');
+                li.onclick = (e) => {
+                    if(e.target !== removeLink) openProjectFromDB(key);
+                };
+                projectListEl.appendChild(li);
+            });
+        }
+
+        async function deleteProject(e, key) {
+            e.stopPropagation(); 
+            if(confirm(`Are you sure you want to remove "${key}"?`)) {
+                await localforage.removeItem(key);
+                if(currentFileName === key) {
+                    location.reload(); 
+                } else {
+                    loadProjectList();
+                }
+            }
+        }
+
+        async function openProjectFromDB(key) {
+            loadingMsg.style.display = 'block';
+            loadingMsg.innerText = "Opening from Library...";
+            try {
+                const data = await localforage.getItem(key);
+                if(!data) throw new Error("File not found");
+                currentFileName = data.fileName;
+                pdfDataBlob = data.pdf;
+                state = data.state || state; 
+                restoreUI();
+                const arrayBuffer = await pdfDataBlob.arrayBuffer();
+                await loadPDF(arrayBuffer);
+                loadProjectList(); 
+            } catch(e) {
+                alert("Error opening project: " + e.message);
+            } finally {
+                loadingMsg.style.display = 'none';
+            }
+        }
+
+        // --- 5. PDF VIEWER LOGIC ---
+        fileInput.addEventListener('change', async function(e) {
+            const file = e.target.files[0];
+            if (!file || file.type !== 'application/pdf') return;
+
+            loadingMsg.style.display = 'block';
+            loadingMsg.innerText = "Importing & Saving...";
+            currentFileName = file.name;
+            pdfDataBlob = file;
+            state.pageNum = 1;
+            state.scale = 1.5;
+            state.counts = { total: 0, repeat: 0 };
+            state.notes = "";
+            state.barTop = "100px"; 
+            
+            await saveProjectToDB(currentFileName, pdfDataBlob);
+            const arrayBuffer = await file.arrayBuffer();
+            await loadPDF(arrayBuffer);
+            restoreUI();
+            loadingMsg.style.display = 'none';
+        });
+
+        async function loadPDF(data) {
+            pdfDoc = await pdfjsLib.getDocument(data).promise;
+            document.getElementById('current-project-name').innerText = "Current: " + currentFileName;
+            renderPage();
+        }
+
+        async function renderPage() {
+            if (!pdfDoc) return;
+            const page = await pdfDoc.getPage(state.pageNum);
+            const viewport = page.getViewport({ scale: state.scale });
+
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            
+            pdfWrapper.style.width = viewport.width + 'px';
+            pdfWrapper.style.height = viewport.height + 'px';
+
+            await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+            document.getElementById('page-info').textContent = `Page ${state.pageNum} of ${pdfDoc.numPages}`;
+            document.getElementById('zoom-display').textContent = Math.round(state.scale * 100) + "%";
+            document.getElementById('prev-page').disabled = state.pageNum <= 1;
+            document.getElementById('next-page').disabled = state.pageNum >= pdfDoc.numPages;
+
+            highlightBar.style.top = state.barTop;
+            highlightBar.style.height = state.barHeight;
+        }
+
+        // --- 6. DRAG LOGIC (MOUSE + TOUCH) ---
+        let isDragging = false;
+        let startY, startTop;
+
+        function startDrag(y) {
+            isDragging = true;
+            startY = y;
+            startTop = parseInt(window.getComputedStyle(highlightBar).top) || 100;
+            highlightBar.style.cursor = 'grabbing';
+        }
+
+        function moveDrag(y) {
+            if (!isDragging) return;
+            const dy = y - startY;
+            let newTop = startTop + dy;
+            const maxTop = pdfWrapper.clientHeight - highlightBar.clientHeight;
+            newTop = Math.max(0, Math.min(newTop, maxTop));
+            highlightBar.style.top = newTop + 'px';
+        }
+
+        function endDrag() {
+            if (isDragging) {
+                isDragging = false;
+                highlightBar.style.cursor = 'ns-resize';
+                state.barTop = highlightBar.style.top;
+                saveCurrentState();
+            }
+        }
+
+        highlightBar.addEventListener('mousedown', (e) => { e.preventDefault(); startDrag(e.clientY); });
+        document.addEventListener('mousemove', (e) => { if(isDragging) { e.preventDefault(); moveDrag(e.clientY); } });
+        document.addEventListener('mouseup', endDrag);
+
+        highlightBar.addEventListener('touchstart', (e) => { if(e.cancelable) e.preventDefault(); startDrag(e.touches[0].clientY); }, { passive: false });
+        document.addEventListener('touchmove', (e) => { if (isDragging) { if(e.cancelable) e.preventDefault(); moveDrag(e.touches[0].clientY); } }, { passive: false });
+        document.addEventListener('touchend', endDrag);
+
+        // --- 7. SMART ZOOM LOGIC ---
+        window.changeZoom = (delta) => {
+            if (!pdfDoc) return;
+            
+            const oldScale = state.scale;
+            const newScale = Math.max(0.5, Math.min(5.0, state.scale + delta));
+            const ratio = newScale / oldScale;
+
+            const currentTop = parseFloat(highlightBar.style.top) || 100;
+            const currentHeight = parseFloat(highlightBar.style.height) || 30;
+
+            state.barTop = (currentTop * ratio) + 'px';
+            state.barHeight = (currentHeight * ratio) + 'px';
+            state.scale = newScale;
+
+            heightSlider.value = parseFloat(state.barHeight);
+            
+            renderPage();
+            saveCurrentState();
+        };
+
+        document.getElementById('prev-page').addEventListener('click', () => {
+            if (state.pageNum <= 1) return;
+            state.pageNum--;
+            renderPage();
+            saveCurrentState();
+        });
+        document.getElementById('next-page').addEventListener('click', () => {
+            if (!pdfDoc || state.pageNum >= pdfDoc.numPages) return;
+            state.pageNum++;
+            renderPage();
+            saveCurrentState();
+        });
+
+        heightSlider.addEventListener('input', (e) => {
+            state.barHeight = e.target.value + 'px';
+            highlightBar.style.height = state.barHeight;
+            saveCurrentState();
+        });
+
+        window.setBarColor = (color, btn) => {
+            state.barColor = color;
+            highlightBar.style.backgroundColor = color;
+            document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('selected'));
+            if(btn) btn.classList.add('selected');
+            saveCurrentState();
+        }
+
+        window.updateCount = (type, change) => {
+            state.counts[type] = Math.max(0, state.counts[type] + change);
+            document.getElementById(`count-${type}`).innerText = state.counts[type];
+            saveCurrentState();
+        }
+
+        function restoreUI() {
+            document.getElementById('count-total').innerText = state.counts.total;
+            document.getElementById('count-repeat').innerText = state.counts.repeat;
+            document.getElementById('notes-area').value = state.notes;
+            highlightBar.style.height = state.barHeight;
+            highlightBar.style.backgroundColor = state.barColor;
+            highlightBar.style.top = state.barTop;
+            heightSlider.value = parseFloat(state.barHeight);
+        }
+
+        loadProjectList();
+
+    </script>
+</body>
+</html>
